@@ -1,0 +1,3 @@
+# 官方 SDK（fubon_neo）不在 PyPI，請到官方下載頁取得 .whl 自行安裝：
+# https://www.fbs.com.tw/TradeAPI/docs/download/download-sdk.txt
+python-dotenv>=1.0

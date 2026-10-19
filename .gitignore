@@ -1,0 +1,34 @@
+# 機密
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+certs/
+
+# 執行產物
+logs/
+*.log
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# 虛擬環境
+venv/
+.venv/
+env/
+
+# 官方 SDK 安裝檔請自行下載，不要放進 repo
+*.whl
+
+# 編輯器 / 系統
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
