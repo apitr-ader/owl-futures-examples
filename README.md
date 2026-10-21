@@ -26,7 +26,7 @@
 | 帳戶 | 富邦期貨帳戶、已簽署 API 風險使用聲明書、已申請憑證（見 [事前準備](https://www.fbs.com.tw/TradeAPI/docs/trading-future/prepare.txt)） |
 | 條件單（06） | 另需於富邦證券簽署中心選「期貨」簽署期貨條件單同意書（見 [條件單事前準備](https://www.fbs.com.tw/TradeAPI/docs/smart-condition-future/prepare.txt)） |
 
-> 官方測試環境目前只提供**證券**測試帳號，期貨沒有模擬帳號。所以下單相關範例預設都是 DRY_RUN（只印、不送）。
+> 期貨也有測試帳號（官網文件寫只有證券，但實測可用），建議先用測試帳號跑。即便如此，下單相關範例預設都是 DRY_RUN（只印、不送）。
 
 ## 安裝
 
@@ -38,7 +38,7 @@
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install /path/to/fubon_neo-<version>-<platform>.whl
-pip install -r requirements.txt   # 只有 python-dotenv
+pip install -r requirements.txt   # python-dotenv；pandas／pyarrow 為選用（只用 CSV 可不裝）
 ```
 
 安裝細節與相容性：[安裝與版本相容性](https://www.fbs.com.tw/TradeAPI/docs/install-compatibility.txt)
@@ -86,7 +86,53 @@ cp .env.example .env
 | [`examples/04_place_futures_order.py`](examples/04_place_futures_order.py) | 期貨限價單（非阻塞 `unblock=True`），**預設 DRY_RUN** | P9 下單 |
 | [`examples/05_reconnect_websocket.py`](examples/05_reconnect_websocket.py) | 行情斷線重連：背景執行緒、2/4/8/16/30 秒退避、最多 5 次、整份重新訂閱 | P11 限制、P13 斷線重連 |
 | [`examples/06_condition_order.py`](examples/06_condition_order.py) | 期貨單一條件單＋停損停利，**預設 DRY_RUN** | P7 條件單、P12 流程 |
+| [`examples/07_download_minute_history.py`](examples/07_download_minute_history.py) | 分段下載 2017-06 起的台指期 1 分 K（日盤＋夜盤），處理 429／404，合併去重存 Parquet 或 CSV（`--format`） | 回測系列 1 |
+| [`examples/08_backtest_orb.py`](examples/08_backtest_orb.py) | 讀 07 的 CSV 或 Parquet，跑開盤區間突破當沖回測，含交易稅、手續費、滑價，逐年統計（讀 CSV 純標準函式庫） | 回測系列 2 |
+| [`examples/09_download_daily_history.py`](examples/09_download_daily_history.py) | 分段下載 2010 年起的台指期日 K（`timeframe="D"`，每段 < 1 年），存 Parquet 或 CSV | 回測系列 3 |
+| [`examples/10_backtesting_py_turtle.py`](examples/10_backtesting_py_turtle.py) | 用 [backtesting.py](https://kernc.github.io/backtesting.py/) 跑海龜（唐奇安 20/10、2N 停損、1 口），含成本，存 HTML 圖 | 回測系列 3 |
+| [`examples/11_backtrader_turtle.py`](examples/11_backtrader_turtle.py) | 同一策略用 [Backtrader](https://www.backtrader.com/) 跑（mult=200 期貨模式），對照 10，說明成交模型差異 | 回測系列 3 |
+| `examples/_bt_data.py` | 回測共用：Parquet／CSV → OHLCV（台北時間索引）、分 K 合成日／60 分 K、換月倒推調整、海龜指標與成本 | — |
+| `scripts/make_fake_txf_data.py` | 產生**假**台指期資料（隨機漫步）只為測試 10、11 能跑，不是行情 | — |
 | `examples/_common.py` | 共用：讀環境變數、登入、挑期貨帳號、遮罩帳號 | — |
+
+### 📦 分 K 檔案格式：Parquet 或 CSV（07、08）
+
+07 加了 `--format {csv,parquet}`：有裝 `pandas`、`pyarrow` 時預設存 Parquet（zstd 壓縮，不支援時退回 snappy），沒裝就自動存 CSV 並提示。08 看副檔名自動判斷，`.csv` 照舊只用標準函式庫，`.parquet` 才載入 pandas。
+
+為什麼建議 Parquet：9 年 1 分 K 有上百萬根，CSV 每個數字都存成文字、時間字串一再重複；Parquet 是欄式儲存、有壓縮、有型別（時間 datetime64、價格 float32、session 用 category），**檔案小很多，讀取也快很多**，載入後不用再自己 parse 字串。同一份資料用兩種格式跑 08，回測結果完全相同。
+
+```bash
+python examples/07_download_minute_history.py                  # 預設 Parquet（有 pyarrow 時）
+python examples/07_download_minute_history.py --format csv     # 只要 CSV
+python examples/08_backtest_orb.py data/TXF_1c_1m_both_2017-06-01_2026-10-20.parquet
+```
+
+### 🧪 回測管線：富邦新一代 API 下載 → Parquet → backtesting.py／Backtrader（09、10、11）
+
+```text
+富邦新一代 API（historical.candles）
+   ├─ 07：1 分 K（2017-06 起，日盤＋夜盤）
+   └─ 09：日 K（2010 起）
+        ↓  data/*.parquet（或 CSV）
+   _bt_data.load_ohlcv()  → Open/High/Low/Close/Volume，台北時間索引
+        ├─ 10：backtesting.py（價格 × 200 換成元，1 單位＝1 口，輸出 HTML 圖）
+        └─ 11：Backtrader（CommInfo mult=200、保證金制）
+```
+
+```bash
+pip install -r requirements.txt            # 含 pandas、pyarrow、backtesting、backtrader
+python examples/09_download_daily_history.py
+python examples/10_backtesting_py_turtle.py data/TXF_1c_D_regular_2010-01-01_<今天>.parquet
+python examples/11_backtrader_turtle.py     data/TXF_1c_D_regular_2010-01-01_<今天>.parquet
+# 用 07 的 1 分 K：加 --resample D 或 --resample 60min（夜盤依期交所規則歸屬次一交易日）
+# 沒帳號想先試跑：python scripts/make_fake_txf_data.py，再把 data/FAKE_TXF_D.parquet 丟給 10、11
+```
+
+- **策略**：收盤突破前 20 根高（低）→ 下一根開盤做多（空）；收盤破前 10 根反向極值，或收盤超出「進場價 ∓ 2N」→ 下一根開盤出場。N＝20 根 Wilder ATR，固定 1 口、不加碼。
+- **成本**（每口單邊）：手續費 `--commission`（預設 50 元，依券商）＋ 期交稅（價格 × 200 × 十萬分之二）＋ 滑價 `--slippage`（預設 1 點＝200 元）。保證金用 `--margin-ratio`（預設 0.1，實際以期交所公告為準）。
+- **換月**：連續合約 `1!` 不做價差調整，換月會跳空，可能誤觸突破或停損。`--roll-adjust back` 做倒推調整（用新合約開盤 − 舊合約收盤近似價差，屬近似）；要精準請下載各月份合約自行接合。
+- **兩個框架結果**：指標由同一份 pandas 計算、都用「下一根開盤」市價成交，用假資料測試時逐筆進出場價與損益相同；差別只在最後一筆未平倉：10 以 `finalize_trades=True` 在最後收盤結算並計入，11 列為未平倉。改用盤中停損單時兩者成交規則不同，詳見 11 檔頭。
+- Backtrader 最後一版是 2023 年，Python 3.13 實測可跑；若 import 失敗，改用 Python 3.11 venv 或 `pip install backtrader2`。
 
 ### 🔒 下單範例的安全機制（04、06）
 

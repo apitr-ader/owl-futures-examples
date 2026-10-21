@@ -12,6 +12,9 @@ certs/
 logs/
 *.log
 data/
+*.parquet
+*.csv
+*.html
 
 # Python
 __pycache__/
@@ -22,6 +25,7 @@ __pycache__/
 # 虛擬環境
 venv/
 .venv/
+.venv-*/
 env/
 
 # 官方 SDK 安裝檔請自行下載，不要放進 repo

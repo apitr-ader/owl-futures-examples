@@ -1,3 +1,9 @@
 # 官方 SDK（fubon_neo）不在 PyPI，請到官方下載頁取得 .whl 自行安裝：
 # https://www.fbs.com.tw/TradeAPI/docs/download/download-sdk.txt
 python-dotenv>=1.0
+# 選用：07 存 Parquet、08 讀 Parquet 才需要；只用 CSV 可不裝
+pandas>=2.0
+pyarrow>=14.0
+# 選用：10、11 用第三方回測框架跑 Turtle（只想用 08 的話可不裝）
+backtesting>=0.6
+backtrader>=1.9.78  # 2023 年後未再更新；Python 3.13 實測可用，有問題見 11 檔頭
