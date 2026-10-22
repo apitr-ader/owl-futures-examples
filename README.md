@@ -94,6 +94,7 @@ cp .env.example .env
 | [`examples/12_atr_trailing_15m.py`](examples/12_atr_trailing_15m.py) | 15 分 K 的 ORB／唐奇安加 ATR 停損與移動停利，參數網格＋樣本內外＋鄰域熱圖 | 回測系列 5 |
 | [`examples/13_supertrend_grid.py`](examples/13_supertrend_grid.py) | SuperTrend（日 K／60 分／15 分，日盤或日夜盤）參數網格，樣本內外與過度最佳化檢查（排名相關、DSR） | 回測系列 6 |
 | [`examples/14_supertrend_atr_trailing.py`](examples/14_supertrend_atr_trailing.py) | SuperTrend 反手加 ATR 初始停損與移動停利（停損後空手等下次翻轉），停損網格＋樣本內外＋熱圖 | 回測系列 6 |
+| [`examples/15_supertrend_daily_filter.py`](examples/15_supertrend_daily_filter.py) | 日 K SuperTrend 當方向濾網（只用已收完的日 K），只做同向的 60／15 分 SuperTrend；state／event／只做多三種，樣本內外與過度最佳化統計 | 回測系列 7 |
 | `examples/_bt_data.py` | 回測共用：Parquet／CSV → OHLCV（台北時間索引）、分 K 合成日／60 分 K、換月倒推調整、海龜指標與成本 | — |
 | `scripts/make_fake_txf_data.py` | 產生**假**台指期資料（隨機漫步）只為測試 10、11 能跑，不是行情 | — |
 | `examples/_common.py` | 共用：讀環境變數、登入、挑期貨帳號、遮罩帳號 | — |
