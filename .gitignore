@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 *.pfx
+*.pf
 *.p12
 *.pem
 *.key
@@ -10,6 +11,7 @@ certs/
 
 # 執行產物
 logs/
+log/
 *.log
 data/
 *.parquet

@@ -42,9 +42,9 @@ FIELDS = "open,high,low,close,volume,average,transaction"  # average／transacti
 MIN_START = dt.date(2017, 6, 1)
 SLEEP_SEC = 1.1  # 60 次／分 → 每次間隔 > 1 秒，保守一點
 
-# TODO: 未驗證，請對照官方文件
-# 官方文件沒寫單次回傳有沒有筆數上限或分頁。1 分 K 一整年約七、八萬根，
-# 這裡保守用「每段一個月」查詢；若你實測一次抓更長沒問題，可把 --chunk-days 調大（須 < 365）。
+# 已實測（SDK 2.4.0）：單次查詢未見筆數上限／分頁，日盤 1 分 K 近一年（2024-01-02~2024-12-20）一次回 70,347 根。
+# 所以預設每段 360 天（須 < 365）。
+# 時間戳記為「該分鐘的開始」：日盤第一根 08:45、一般最後一根 13:44；13:45 偶有一根為收盤集合競價成交。
 
 
 def has_pyarrow():
@@ -64,7 +64,7 @@ def parse_args():
     p.add_argument("--session", default="both", choices=("regular", "afterhours", "both"))
     p.add_argument("--start", default=MIN_START.isoformat(), help="yyyy-MM-dd（最早 2017-06-01）")
     p.add_argument("--end", default=dt.date.today().isoformat(), help="yyyy-MM-dd（預設今天）")
-    p.add_argument("--chunk-days", type=int, default=31, help="每段查詢天數（須 < 365）")
+    p.add_argument("--chunk-days", type=int, default=360, help="每段查詢天數（須 < 365）")
     p.add_argument("--format", default=None, choices=("csv", "parquet"),
                    help="輸出格式（預設：有裝 pyarrow 用 parquet，否則 csv）")
     p.add_argument("--out", default=None)
@@ -102,7 +102,7 @@ def fetch(restfutopt, query):
                 time.sleep(60)
                 continue
             raise
-        # TODO: 未驗證，請對照官方文件（同 03：假設 Python SDK 回傳 dict）
+        # 已實測（SDK 2.4.0）：Python SDK 回傳 dict（product、contractMonth、exchange、session、timeframe、sort、data[]）
         return result.get("data", []) if isinstance(result, dict) else []
     sys.exit("連續 3 次 429，先停下來，晚點再跑。")
 

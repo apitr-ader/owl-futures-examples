@@ -77,9 +77,7 @@ def main():
     finally:
         sdk.logout()
 
-    # TODO: 未驗證，請對照官方文件
-    # 官方文件只列出 Response Body 的 JSON 結構（product、contractMonth、session、data[]…），
-    # 沒有明寫 Python SDK 回傳的型別；這裡假設是 dict，若不是請依實際回傳調整。
+    # 已實測（SDK 2.4.0）：Python SDK 回傳 dict（product、contractMonth、exchange、session、timeframe、sort、data[]）
     rows = result.get("data", []) if isinstance(result, dict) else []
     if not rows:
         print("沒有資料，原始回傳：{}".format(result))

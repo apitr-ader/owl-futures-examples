@@ -84,7 +84,7 @@ def fetch(restfutopt, query):
                 time.sleep(60)
                 continue
             raise
-        # TODO: 未驗證，請對照官方文件（同 03／07：假設 Python SDK 回傳 dict）
+        # 已實測（SDK 2.4.0）：Python SDK 回傳 dict（product、contractMonth、exchange、session、timeframe、sort、data[]）
         return result.get("data", []) if isinstance(result, dict) else []
     sys.exit("連續 3 次 429，先停下來，晚點再跑。")
 
@@ -140,7 +140,7 @@ def main():
         for c in ("open", "high", "low", "close", "change"):
             df[c] = pd.to_numeric(df[c]).astype("float64")
         df["volume"] = pd.to_numeric(df["volume"]).astype("Int64")
-        df.to_parquet(out, engine="pyarrow", index=False)
+        df.to_parquet(out, engine="pyarrow", compression="zstd", index=False)
     else:
         with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")

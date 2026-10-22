@@ -58,7 +58,7 @@ def login(sdk):
     mode = os.environ.get("FUBON_LOGIN_MODE", "password").strip().lower()
     personal_id = require_env("FUBON_ID")
     cert_path = require_env("FUBON_CERT_PATH")
-    cert_pass = os.environ.get("FUBON_CERT_PASSWORD", "")
+    cert_pass = os.environ.get("FUBON_CERT_PASSWORD", "") or os.environ.get("FUBON_CERT_PASS", "")
 
     cert_file = Path(cert_path).expanduser()
     if not cert_file.is_absolute():
@@ -70,7 +70,7 @@ def login(sdk):
     if mode == "apikey":
         api_key = require_env("FUBON_API_KEY")
         if not cert_pass:
-            # TODO: 未驗證，請對照官方文件
+            # 已實測（SDK 2.4.0）：apikey_login(ID, Key, 憑證路徑, 憑證密碼) 四參數可登入。
             # 官方 apikey_login 範例只示範四個參數（ID、Key、憑證路徑、憑證密碼），
             # 沒有示範「預設密碼憑證」省略第四個參數的寫法，因此這裡要求必填。
             sys.exit("API Key 登入請設定 FUBON_CERT_PASSWORD（預設密碼憑證請填你的登入 ID）。")
