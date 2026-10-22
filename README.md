@@ -91,6 +91,8 @@ cp .env.example .env
 | [`examples/09_download_daily_history.py`](examples/09_download_daily_history.py) | 分段下載 2010 年起的台指期日 K（`timeframe="D"`，每段 < 1 年），存 Parquet 或 CSV | 回測系列 3 |
 | [`examples/10_backtesting_py_turtle.py`](examples/10_backtesting_py_turtle.py) | 用 [backtesting.py](https://kernc.github.io/backtesting.py/) 跑海龜（唐奇安 20/10、2N 停損、1 口），含成本，存 HTML 圖 | 回測系列 3 |
 | [`examples/11_backtrader_turtle.py`](examples/11_backtrader_turtle.py) | 同一策略用 [Backtrader](https://www.backtrader.com/) 跑（mult=200 期貨模式），對照 10，說明成交模型差異 | 回測系列 3 |
+| [`examples/12_atr_trailing_15m.py`](examples/12_atr_trailing_15m.py) | 15 分 K 的 ORB／唐奇安加 ATR 停損與移動停利，參數網格＋樣本內外＋鄰域熱圖 | 回測系列 5 |
+| [`examples/13_supertrend_grid.py`](examples/13_supertrend_grid.py) | SuperTrend（日 K／60 分／15 分，日盤或日夜盤）參數網格，樣本內外與過度最佳化檢查（排名相關、DSR） | 回測系列 6 |
 | `examples/_bt_data.py` | 回測共用：Parquet／CSV → OHLCV（台北時間索引）、分 K 合成日／60 分 K、換月倒推調整、海龜指標與成本 | — |
 | `scripts/make_fake_txf_data.py` | 產生**假**台指期資料（隨機漫步）只為測試 10、11 能跑，不是行情 | — |
 | `examples/_common.py` | 共用：讀環境變數、登入、挑期貨帳號、遮罩帳號 | — |
@@ -124,6 +126,7 @@ pip install -r requirements.txt            # 含 pandas、pyarrow、backtesting�
 python examples/09_download_daily_history.py
 python examples/10_backtesting_py_turtle.py data/TXF_1c_D_regular_2010-01-01_<今天>.parquet
 python examples/11_backtrader_turtle.py     data/TXF_1c_D_regular_2010-01-01_<今天>.parquet
+python examples/13_supertrend_grid.py --daily data/TXF_1c_D_regular_2010-01-01_<今天>.parquet --minute data/TXF_1c_1m_both_2017-06-01_<今天>.parquet
 # 用 07 的 1 分 K：加 --resample D 或 --resample 60min（夜盤依期交所規則歸屬次一交易日）
 # 沒帳號想先試跑：python scripts/make_fake_txf_data.py，再把 data/FAKE_TXF_D.parquet 丟給 10、11
 ```
