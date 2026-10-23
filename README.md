@@ -99,6 +99,7 @@ cp .env.example .env
 | [`examples/17_supertrend_60m_filter_5m.py`](examples/17_supertrend_60m_filter_5m.py) | 60 分 SuperTrend（只用已收完的 60 分 K）當方向濾網，只做同向的 5 分 SuperTrend（event）；日盤／日夜盤、多空／只做多／只做空，四維鄰域選參、樣本內外、排除 2025–26、DSR | 回測系列 9 |
 | `examples/18_gap_fill.py` | 回測系列 10：日盤開盤跳空回補（逆勢補缺口，參考前日盤／前夜盤收盤；最小跳空×停損×進場延遲網格、原始規則與永遠逆勢對照） |
 | `examples/19_gap_follow.py` | 回測系列 11：日盤開盤跳空「順勢」（18 的 invert；收盤出場＋前收/ATR/移動停損網格、原始預設反向與永遠順勢對照、毛利 vs 成本拆解） |
+| `examples/20_gap_follow_daily_filter.py` | 回測系列 12：跳空順勢＋日 K 方向濾網（SuperTrend 10/20×2/3、MA20/MA60，前夜盤／前日盤參考價，與未濾網及 19 選參對照） |
 | `examples/_bt_data.py` | 回測共用：Parquet／CSV → OHLCV（台北時間索引）、分 K 合成日／60 分 K、換月倒推調整、海龜指標與成本 | — |
 | `scripts/make_fake_txf_data.py` | 產生**假**台指期資料（隨機漫步）只為測試 10、11 能跑，不是行情 | — |
 | `examples/_common.py` | 共用：讀環境變數、登入、挑期貨帳號、遮罩帳號 | — |
