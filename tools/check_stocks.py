@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Check data/stocks: coverage, gaps, adjusted-vs-raw sanity, spot checks (2330, 2317, a capital reduction).
 Usage: python check_stocks.py [--codes 2330,2317]   (no network)"""
-import argparse, json
+import argparse, gzip, json
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -36,9 +36,11 @@ def main():
     # market calendar gaps
     cal = {}
     for m in ("twse", "tpex"):
-        cal[m] = sorted(p.name[:8] for p in (OUT / "cache" / m).glob("*.json.gz") if p.stat().st_size > 30)
+        cal[m] = sorted(p.name[:8] for p in (OUT / "cache" / m).glob("*.json.gz") if json.load(gzip.open(p, "rt")))
     only = set(cal["twse"]) ^ set(cal["tpex"])
-    print("trading days twse/tpex:", len(cal["twse"]), len(cal["tpex"]), " days in only one market:", sorted(only)[:10])
+    both = min(cal["twse"][-1], cal["tpex"][-1])
+    only = sorted(d for d in only if d <= both)
+    print("trading days twse/tpex:", len(cal["twse"]), len(cal["tpex"]), " days in only one market (should be ~0):", only[:10])
     # sanity: adjusted daily returns vs price limits
     bad, big, n = [], 0, 0
     for p in sorted((OUT / "adj").glob("*.parquet")):
