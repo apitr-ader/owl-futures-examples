@@ -38,3 +38,10 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 期交所資料（授權限制，不可上傳）
+*.zip
+*.rpt
+*.RPT
+futures_ticks/
+stock_futures_daily/
