@@ -6,9 +6,10 @@
 每月最後交易日收盤換股；組合 60 日共變異（Ledoit-Wolf）估波動，目標 15%，縮放上限 1.0（現股不加槓桿）。
 大盤濾網：(a) cmp = TXF 21/63/126 平均報酬 > 0；(b) ma250 = TXF 收盤 > 250 日均線；(c) none。濾網關 → 全現金（現金 0 報酬）。
 TXF 日K 自 2010 起，濾網尚未可算的期間視為關（cmp 約 2010-07、ma250 約 2011-01 起才有效）。
-成本：手續費 0.1425%/邊、證交稅 0.3%（賣）、滑價 1 tick/邊（台股升降單位，以未還原價計）。
+成本：手續費 0.1425%×5折 = 0.07125%/邊（2026-10 起統一）、證交稅 0.3%（賣）、滑價 1 tick/邊（台股升降單位，以未還原價計）。
 下市：最後交易日後報酬記 0，下次換股時以最後價格出清（含成本）。
 樣本：IS 2010-2019，OOS 2020-01 ~ 最新，OOS 除 2025-26。DSR：以 3 濾網 × 3 流動性門檻 = 9 試驗的 OOS 日 Sharpe 變異。
+成交：預設 t 日收盤訊號、t+1 開盤成交（含漲跌停無法成交、隔日重試），引擎在 tools/spotsim.py；--fill close 為舊收盤成交（輸出到 results/closefill/）。
 對照：41（重建股票期貨 27 pick，讀 results/rb_summary.csv）、0050（Yahoo adjclose，data/bench/0050.json）、TXF B&H、39 TXF SMA250。
 """
 import importlib.util, json, math, sys
@@ -19,12 +20,23 @@ from statistics import NormalDist
 ROOT = Path("/workspace/fubon-threads")
 sys.path.insert(0, str(ROOT / "tools"))
 import stockdata as sd  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import spotsim as ss  # noqa: E402
 
 _s = importlib.util.spec_from_file_location("ma39", Path(__file__).with_name("39_txf_ma_scaling.py"))
 m39 = importlib.util.module_from_spec(_s); _s.loader.exec_module(m39)
-OUT = ROOT / "results"
+FILL = ss.fill_arg()
+RES = ROOT / "results"; OUT = RES if FILL == "next_open" else RES / "closefill"; OUT.mkdir(exist_ok=True)
 RF, N, VT, LEGS = 0.015, 10, 0.15, (21, 63, 126)
-COMM, TAX = 0.001425, 0.003
+COMM, TAX = 0.001425 * 0.5, 0.003
+_D = None
+
+
+def prep():
+    global _D
+    if _D is None:
+        _D = ss.prepare(sd)
+    return _D
 LIQS = {"20M": 2e7, "50M": 5e7, "100M": 1e8}; LIQ0 = "50M"
 IS0, IS1, EX1 = pd.Timestamp("2010-01-01"), pd.Timestamp("2020-01-01"), pd.Timestamp("2025-01-01")
 PER = (("IS", IS0, IS1), ("OOS", IS1, None), ("OOS_ex2526", IS1, EX1))
@@ -78,49 +90,6 @@ def market_signals(tI, days):
     return {"cmp": f(cmp & tI.shift(126).notna()), "ma250": f(ma250), "none": np.ones(len(days), bool)}
 
 
-def simulate(adj, raw, tov, sig, liq):
-    days = adj.index; A = adj.values; P = raw.values
-    R = np.vstack([np.full(A.shape[1], np.nan), A[1:] / A[:-1] - 1])
-    traded = ~np.isnan(P)
-    R0 = np.nan_to_num(R)
-    nhist = np.cumsum(traded, 0)
-    t20 = pd.DataFrame(np.where(traded, tov.values, 0.0)).rolling(20).mean().values
-    me = np.r_[days[1:].month != days[:-1].month, True]
-    lastpx = pd.DataFrame(P).ffill().values
-    thr = (1 + RF) ** (np.mean(LEGS) / 252) - 1
-    w = np.zeros(A.shape[1]); out = np.zeros(len(days)); turn = cost = 0.0
-    for t in range(len(days)):
-        if t > 0:
-            pr = w @ R0[t]; out[t] = pr
-            g = 1 + pr
-            w = w * (1 + R0[t]) / g if g > 0 else w * 0
-        if not me[t] or t < 130 or days[t] < IS0 - pd.Timedelta(days=40):
-            continue
-        tgt = np.zeros_like(w)
-        if sig[t]:
-            ok = np.where(traded[t] & (nhist[t] >= 127) & (t20[t] >= liq))[0]
-            raw_m = np.zeros(len(ok)); vs = np.zeros(len(ok))
-            for L in LEGS:
-                rL = A[t, ok] / A[t - L, ok] - 1
-                v = np.nanstd(R[t - L + 1:t + 1, ok], 0) * math.sqrt(L)
-                raw_m += rL; vs += rL / np.maximum(v, 1e-6)
-            raw_m /= 3; vs /= 3
-            good = np.isfinite(vs) & np.isfinite(raw_m) & (raw_m > thr)
-            cand = ok[good][np.argsort(-vs[good])][:N]
-            if len(cand):
-                tgt[cand] = 1.0 / N
-                C = lw_cov(np.nan_to_num(R[t - 59:t + 1, cand]))
-                pv = math.sqrt(max(tgt[cand] @ C @ tgt[cand], 1e-12) * 252)
-                tgt[cand] *= min(VT / pv, 1.0)
-        d = tgt - w
-        px = np.where(np.isnan(lastpx[t]), 1.0, lastpx[t])
-        slip = tick(px) / px
-        c = (np.clip(d, 0, None) * (COMM + slip)).sum() + (np.clip(-d, 0, None) * (COMM + TAX + slip)).sum()
-        out[t] -= c; cost += c; turn += np.abs(d).sum() / 2; w = tgt
-    r = pd.Series(out, days); r = r[r.index >= IS0]
-    return r, turn, cost
-
-
 def bench_0050():
     d = json.load(open(ROOT / "data/bench/0050.json"))["chart"]["result"][0]
     s = pd.Series(d["indicators"]["adjclose"][0]["adjclose"], pd.to_datetime(d["timestamp"], unit="s") + pd.Timedelta(hours=8)).dropna()
@@ -138,13 +107,13 @@ def main():
     curves, rows, srs = {}, [], []
     for f in ("cmp", "ma250", "none"):
         for lk, lv in LIQS.items():
-            r, turn, cost = simulate(adj, raw, tov, sigs[f], lv)
+            r, e, turn, cost, ev = ss.run(prep(), sigs[f], liq=lv, vt=VT, comm=COMM, tax=TAX, fill=FILL)
             yrs = len(r) / 252
             srs.append(win(r, IS1, None).pipe(lambda x: (x - RF / 252).mean() / (x - RF / 252).std()))
             key = f"spot {f} liq{lk}"; curves[key] = r
             for p, lo, hi in PER:
                 rows.append(dict(name=key, period=p, **stats(win(r, lo, hi)), turnover_yr=turn / yrs, cost_pct_yr=cost / yrs * 100,
-                                 expo=float((r != 0).mean())))
+                                 expo=float((win(e, lo, hi) > 0.01).mean()), blocked_up=ev["blocked_up"], blocked_dn=ev["blocked_dn"], orders=ev["orders"]))
             print(key, "done", flush=True)
     for k in [k for k in curves if k.endswith(LIQ0)]:
         for row in rows:
@@ -157,7 +126,7 @@ def main():
         r = win(r, IS0, end + pd.Timedelta(days=1)); curves[k] = r
         for p, lo, hi in PER:
             rows.append(dict(name=k, period=p, **stats(win(r, lo, hi))))
-    rb = pd.read_csv(OUT / "rb_summary.csv")
+    rb = pd.read_csv(RES / "rb_summary.csv")
     rb = rb[(rb.slip == 1.0) & (rb.start == "IS2010") & rb.data.str.startswith("new")]
     for x in rb.itertuples():
         rows.append(dict(name=f"41 rebuilt SF {x.filter} (to 2026-08-18)", period=x.period, CAGR=x.CAGR, sharpe=x.sharpe, MDD=x.MDD))
@@ -174,7 +143,7 @@ def main():
         e = (1 + r).cumprod(); st = dict(c="k", lw=2) if "TXF B&H" in k else dict(c="gray", lw=1.5) if "SMA" in k else dict(lw=1.2)
         axs[0].plot(e.index, e, label=k, **st); axs[1].plot(e.index, e / e.cummax() - 1, **st)
     axs[0].set_yscale("log"); axs[0].legend(fontsize=8); axs[1].set_ylabel("drawdown")
-    axs[0].set_title("42 spot dual momentum (10 names, vt15%, liq 50M, full TW costs) vs benchmarks")
+    axs[0].set_title(f"42 spot dual momentum (10 names, vt15%, liq 50M, comm 50% off, fill={FILL}) vs benchmarks")
     for a in axs:
         a.axvline(IS1, c="gray", lw=0.8); a.axvline(EX1, c="gray", lw=0.6, ls=":")
     plt.tight_layout(); plt.savefig(OUT / "spot_equity_dd.png", dpi=110); plt.close()
