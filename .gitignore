@@ -49,3 +49,7 @@ stock_futures_daily/
 # 示範用小樣本（最近 20 個交易日的日K，可上傳）
 !sample_data/
 !sample_data/*.parquet
+
+# TAIFEX options daily (licensing: never commit)
+data/options_daily/
+options_daily/
