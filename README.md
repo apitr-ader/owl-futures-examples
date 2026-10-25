@@ -178,3 +178,15 @@ python examples/13_supertrend_grid.py --daily data/TXF_1c_D_regular_2010-01-01_<
 ## 授權
 
 [MIT](LICENSE) © 夜盤貓頭鷹
+
+## 示範資料（sample_data/）
+
+沒有 API 帳號也能試跑：`sample_data/` 放了**僅 20 個交易日**的日K小樣本（只供示範，不足以做回測結論）。
+
+| 檔案 | 內容 |
+| --- | --- |
+| `TXF_D_sample.parquet` | 台指期近月連續日K（日盤）2026-09-21 ~ 2026-10-21 |
+| `stock_futures_D_sample.parquet` | 股票期貨近月連續日K：CDF（台積電）、DVF（聯發科）、FRF（台達電）、NYF（元大台灣50）2026-09-22 ~ 2026-10-22 |
+
+欄位：`date, symbol, open, high, low, close, volume`。讀取：`from tools.sample_data import load_daily; load_daily("TXF")`。
+來源為 API 下載的日K；不含任何盤中或逐筆資料。
