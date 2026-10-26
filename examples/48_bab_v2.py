@@ -4,10 +4,12 @@
 - 電子業：產業 = data/stocks/_industry_map.csv（現行上市櫃產業別；下市股以 FinMind TaiwanStockInfo 補，79 檔下市股無產業 → 排除）。
   電子 = 半導體/電腦及週邊/光電/通信網路/電子零組件/電子通路/資訊服務/其他電子（含 FinMind「電子工業」）。上市櫃皆含。
   β 對電子類指數（價格指數，無 TR）；穩健性：β 對 TAIEX TR。避險：放空 TXF × 低 β 腿的 TAIEX β（電子類指數不可交易）。
+- 金融業（--fin-only 只跑此段）：金融保險業（含下市股 FinMind「金融保險」），β 對金融類指數（價格指數）＋穩健性對 TAIEX TR；
+  樣本小 → 最少 12 檔、以中位數/三分位取代五分位；(c) 空方用個股期貨；流動性門檻敏感度。
 - 產業中性：β 在各產業內百分位排名後再做 rank 權重（多空在每個產業內大致平衡）。
 期間：IS 2011-2019（另報 IS 2012-2019 以便與 47 比較），OOS 2020-01 ~ 2026-10-22。
 """
-import importlib.util
+import importlib.util, sys
 from pathlib import Path
 import numpy as np, pandas as pd
 
@@ -23,12 +25,12 @@ def idx(path, col):
     return d.pct_change().dropna()
 
 
-def targets(D, B, t, mask=None, kind="rank", mode="ls", grp=None, BH=None, SF=None, liq=m.LIQ, pf=m.PFLOOR):
+def targets(D, B, t, mask=None, kind="rank", mode="ls", grp=None, BH=None, SF=None, liq=m.LIQ, pf=m.PFLOOR, min_n=20):
     b = B[t]; ok = D["traded"][t] & np.isfinite(b) & (D["t20"][t] >= liq) & (D["P"][t] >= pf)
     if mask is not None:
         ok &= mask
     i = np.where(ok)[0]
-    if len(i) < 20:
+    if len(i) < min_n:
         return None
     bb = b[i]
     if grp is not None:   # within-industry percentile ranks
@@ -39,7 +41,7 @@ def targets(D, B, t, mask=None, kind="rank", mode="ls", grp=None, BH=None, SF=No
     if kind == "rank":
         k = 2 / np.abs(z - zb).sum(); wL = k * np.clip(zb - z, 0, None); wH = k * np.clip(z - zb, 0, None)
     else:
-        q = 0.5 if kind == "ew" else 0.2
+        q = {"ew": 0.5, "q3": 1 / 3, "q5": 0.2}[kind]
         lo, hi = bb <= np.quantile(bb, q), bb >= np.quantile(bb, 1 - q); wL, wH = lo / lo.sum(), hi / hi.sum()
     if SF is not None:
         s = SF[t, i] & (z > zb)
@@ -68,7 +70,8 @@ def main():
     pd.set_option("display.width", 260)
     D = m.ss.prepare(m.sd); days = D["days"]; X = m.m37.load()
     rT, rE, r50 = idx("taiex_daily.parquet", "tr_close"), idx("sector_electronics_daily.parquet", "close"), m.bench()
-    BT, BE, B50 = m.betas(D, rT), m.betas(D, rE), m.betas(D, r50)
+    rF = idx("sector_finance_daily.parquet", "close")
+    BT, BE, B50, BF = m.betas(D, rT), m.betas(D, rE), m.betas(D, r50), m.betas(D, rF)
     SF = m.sf_mask(D)
     im = pd.read_csv(ROOT / "data/stocks/_industry_map.csv", dtype={"code": str}).set_index("code").reindex(D["cols"])
     EL = im.elec.fillna(False).astype(bool).values; GRP = im.ind.fillna("NA").values; KNOWN = im.ind.notna().values
@@ -84,7 +87,8 @@ def main():
         V[name] = o
 
     V = {}
-    for tag, B in (("T", BT), ("50", B50)):
+    FINONLY = "--fin-only" in sys.argv
+    for tag, B in (() if FINONLY else (("T", BT), ("50", B50))):
         run(B, f"[{tag}] (a) BAB rank (paper)")
         if tag == "50":
             continue
@@ -100,37 +104,62 @@ def main():
         run(B, f"[{tag}] (d') long high-β unlev", mode="high")
         run(B, f"[{tag}] sector-neutral BAB rank", mask=KNOWN, grp=GRP)
         run(B, f"[{tag}] sector-neutral (b2) − TXF×βL", mask=KNOWN, grp=GRP, mode="lhedge_unlev")
-    for tag, B in (("E", BE), ("E|T", BT)):
+    for tag, B in (() if FINONLY else (("E", BE), ("E|T", BT))):
         run(B, f"[{tag}] ELEC BAB rank", mask=EL)
         run(B, f"[{tag}] ELEC BAB EW quintile", mask=EL, kind="q5")
         run(B, f"[{tag}] ELEC (b2) low-β unlev − TXF×βL(TAIEX)", mask=EL, mode="lhedge_unlev", BH=BT)
         run(B, f"[{tag}] ELEC (d) long low-β unlev", mask=EL, mode="long")
         run(B, f"[{tag}] ELEC (d') long high-β unlev", mask=EL, mode="high")
-    run(BE, "[E] ELEC EW all (liq-filtered)", mask=EL, mode="all")
-    run(BE, "[E] ELEC sub-industry-neutral BAB", mask=EL, grp=GRP)
-    for k, r in (("TAIEX TR B&H", rT), ("ELEC index B&H (price)", rE), ("0050 B&H", r50)):
+    if not FINONLY:
+        run(BE, "[E] ELEC EW all (liq-filtered)", mask=EL, mode="all")
+        run(BE, "[E] ELEC sub-industry-neutral BAB", mask=EL, grp=GRP)
+    # ---- FINANCE-ONLY BAB (金融保險業; small universe -> min 12 names, median/tercile instead of quintile)
+    FN = pd.Series(GRP).str.contains("金融").values
+    nf = [int((FN & D["traded"][t] & np.isfinite(BF[t]) & (D["t20"][t] >= m.LIQ) & (D["P"][t] >= m.PFLOOR)).sum()) for t in reb]
+    print("finance names passing filter per rebalance: min/median/max", min(nf), int(np.median(nf)), max(nf), "| in panel", int(FN.sum()))
+    fk = dict(mask=FN, min_n=12)
+    for tag, B in (("F", BF), ("F|T", BT)):
+        run(B, f"[{tag}] FIN BAB rank", **fk)
+        run(B, f"[{tag}] FIN BAB EW median", kind="ew", **fk)
+        run(B, f"[{tag}] FIN BAB EW tercile", kind="q3", **fk)
+        run(B, f"[{tag}] FIN (b2) low-β unlev − TXF×βL(TAIEX)", mode="lhedge_unlev", BH=BT, **fk)
+        run(B, f"[{tag}] FIN (c) long spot / short SF", SF=SF, sim_kw=dict(sfshort=True), **fk)
+        run(B, f"[{tag}] FIN (d) long low-β unlev", mode="long", **fk)
+        run(B, f"[{tag}] FIN (d') long high-β unlev", mode="high", **fk)
+    for nm, lq in (("liq0", 0), ("liq20M", 2e7), ("liq100M", 1e8), ("liq200M", 2e8)):
+        run(BF, f"[F] FIN BAB rank {nm}", mask=FN, min_n=12, liq=lq)
+    run(BF, "[F] FIN EW all (liq-filtered)", mode="all", **fk)
+    for k, r in (("TAIEX TR B&H", rT), ("ELEC index B&H (price)", rE), ("FIN index B&H (price)", rF), ("0050 B&H", r50)):
         V[k] = pd.DataFrame({"ret": r.reindex(days).fillna(0)}).assign(long=lambda d: d.ret, short=0., hedge=0., cash=0., cost=0., borrow=0., turn=0.)
     rows = []
     for k, o in V.items():
         for p, lo, hi in PER:
             st = m.stats(m.win(o, lo, hi), rT)
-            if k.startswith("[E") or "電子" in k:
+            if k.startswith("[F") or "FIN" in k:
+                st["beta_sect"] = m.stats(m.win(o, lo, hi), rF)["beta3d"]
+            if k.startswith("[E") or "ELEC" in k:
                 st["beta_elec"] = m.stats(m.win(o, lo, hi), rE)["beta3d"]
             rows.append(dict(name=k, period=p, **st))
-    S = pd.DataFrame(rows); S.to_csv(OUT / "bab2_summary.csv", index=False)
-    cols = ["name", "CAGR", "vol", "sharpe", "MDD", "beta3d", "beta_elec", "long_yr", "short_yr", "hedge_yr", "cost_yr", "turn_yr"]
+    S = pd.DataFrame(rows); S.to_csv(OUT / ("bab2_fin_summary.csv" if FINONLY else "bab2_summary.csv"), index=False)
+    cols = ["name", "CAGR", "vol", "sharpe", "MDD", "beta3d", "beta_elec", "beta_sect", "long_yr", "short_yr", "hedge_yr", "cost_yr", "turn_yr"]
     for p in ("IS", "IS12", "OOS"):
-        print(f"\n== {p}"); print(S[S.period == p][cols].round(3).to_string(index=False))
+        print(f"\n== {p}"); print(S[S.period == p][[c for c in cols if c in S]].round(3).to_string(index=False))
     Y = pd.DataFrame({k: (1 + m.win(o, IS0, None).ret).groupby(m.win(o, IS0, None).index.year).prod() - 1 for k, o in V.items()})
-    Y.to_csv(OUT / "bab2_yearly.csv")
+    Y.to_csv(OUT / ("bab2_fin_yearly.csv" if FINONLY else "bab2_yearly.csv"))
     print(Y[[c for c in Y if "liq" not in c and "borrow" not in c]].round(3).T.to_string())
-    for k in ("[T] (a) BAB rank (paper)", "[E] ELEC BAB rank"):
+    for k in ("[T] (a) BAB rank (paper)", "[E] ELEC BAB rank", "[F] FIN BAB rank", "[F|T] FIN BAB rank"):
+        if k not in V:
+            continue
         i = V[k].attrs["info"]; print(k, "first reb", i.index[0].date(), i[["bL", "bH", "nL"]].mean().round(2).to_dict())
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     for fn, keys in (("bab2_market", ["[T] (a) BAB rank (paper)", "[50] (a) BAB rank (paper)", "[T] (b2) low-β unlev − TXF×βL", "[T] (c) long spot / short SF",
                                        "[T] (d) long low-β unlev", "[T] sector-neutral BAB rank", "TAIEX TR B&H", "0050 B&H"]),
                      ("bab2_elec", ["[E] ELEC BAB rank", "[E|T] ELEC BAB rank", "[E] ELEC sub-industry-neutral BAB", "[E] ELEC (b2) low-β unlev − TXF×βL(TAIEX)",
-                                    "[E] ELEC (d) long low-β unlev", "[E] ELEC (d') long high-β unlev", "[E] ELEC EW all (liq-filtered)", "ELEC index B&H (price)", "TAIEX TR B&H"])):
+                                    "[E] ELEC (d) long low-β unlev", "[E] ELEC (d') long high-β unlev", "[E] ELEC EW all (liq-filtered)", "ELEC index B&H (price)", "TAIEX TR B&H"]),
+                     ("bab2_fin", ["[F] FIN BAB rank", "[F|T] FIN BAB rank", "[F] FIN BAB EW tercile", "[F] FIN (b2) low-β unlev − TXF×βL(TAIEX)", "[F] FIN (c) long spot / short SF",
+                                   "[F] FIN (d) long low-β unlev", "[F] FIN (d') long high-β unlev", "[F] FIN EW all (liq-filtered)", "FIN index B&H (price)", "TAIEX TR B&H"])):
+        if not all(k in V for k in keys):
+            continue
         fig, ax = plt.subplots(2, 1, figsize=(13, 9), sharex=True)
         for k in keys:
             e = (1 + m.win(V[k], IS0, None).ret).cumprod(); st = dict(c="k", lw=2) if "B&H" in k else dict(lw=1.2)
