@@ -3,20 +3,21 @@ MI_5MINS_HIST：開高低收（1999-01 起）；MFI94U：發行量加權股價�
 輸出 data/index/taiex_daily.parquet（date, open, high, low, close, tr_close, volume, turnover, trades）；月檔快取於 data/index/raw/。
 用法：python tools/fetch_taiex.py [--root /workspace/fubon-threads]
 """
-import argparse, json, random, time, urllib.request
+import argparse, json, random, subprocess, time
 from pathlib import Path
 import pandas as pd
 
 EP = {"MI_5MINS_HIST": ("indicesReport", 1999)  # rwd 路徑 302 → 用舊路徑
-, "MFI94U": ("TAIEX", 2003), "FMTQIK": ("afterTrading", 1999),
+, "MFI94U": ("TAIEX", 2003), "FMTQIK": ("afterTrading", 1999),  # 可用 --no-vol 略過
+     
       "EFTRI_HIST": ("indicesReport", 2000)}  # 電子類/金融保險類（僅收盤，2000-01-04 起）
 
 
 def get(url, tries=6):
     for k in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            j = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+            b = subprocess.run(["curl", "-s", "-m", "30", "-A", "Mozilla/5.0", url], capture_output=True, timeout=40).stdout  # urllib 曾卡死
+            j = json.loads(b.decode("utf-8"))
             if j.get("stat") == "OK" or "沒有符合" in str(j.get("stat")):
                 return j
         except Exception as e:  # noqa
@@ -39,10 +40,12 @@ def roc(s):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--root", default="/workspace/fubon-threads"); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--root", default="/workspace/fubon-threads"); ap.add_argument("--no-vol", action="store_true"); a = ap.parse_args()
     out = Path(a.root) / "data/index"; raw = out / "raw"; raw.mkdir(parents=True, exist_ok=True)
     this = pd.Timestamp.today().strftime("%Y%m")
     for ep, (grp, y0) in EP.items():
+        if a.no_vol and ep == "FMTQIK":
+            continue
         for p in months(y0):
             f = raw / f"{ep}_{p.strftime('%Y%m')}.json"
             if f.exists() and p.strftime("%Y%m") != this:
@@ -60,7 +63,7 @@ def main():
         rows[ep] = recs
     px = pd.DataFrame(rows["MI_5MINS_HIST"], columns=["date", "open", "high", "low", "close"]).set_index("date")
     tr = pd.DataFrame(rows["MFI94U"], columns=["date", "tr_close"]).set_index("date")
-    vq = pd.DataFrame([r[:4] for r in rows["FMTQIK"]], columns=["date", "volume", "turnover", "trades"]).set_index("date")
+    vq = pd.DataFrame([r[:4] for r in rows["FMTQIK"]] or None, columns=["date", "volume", "turnover", "trades"]).set_index("date")
     df = px.join(tr, how="outer").join(vq, how="left").sort_index()
     df = df[~df.index.duplicated(keep="last")].reset_index()
     df.to_parquet(out / "taiex_daily.parquet", index=False)
