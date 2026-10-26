@@ -205,6 +205,73 @@ def beta_study(D, X, rT, BT, SF, EL, FN, reb):
     plt.tight_layout(); plt.savefig(OUT / "bab3_beta_methods.png", dpi=110); plt.close()
 
 
+# ======================= --cost-study: decompose BAB losses (costs vs gross) =======================
+def sim_c(D, X, tg, tc=True, borrow=m.BORROW, fin=m.FIN):
+    """m47.sim with switchable trading costs (tc=False: no commission/tax/slippage/TXF costs)."""
+    old = m.COMM, m.TAX, m.tick
+    if not tc:
+        m.COMM, m.TAX, m.tick = 0.0, 0.0, (lambda px: np.zeros_like(np.asarray(px, float)))
+    try:
+        o = m.sim(D, X, tg, borrow=borrow, fin=fin)
+    finally:
+        m.COMM, m.TAX, m.tick = old
+    if not tc:   # TXF costs are hard-coded in m.sim: add them back
+        o["ret"] = o["ret"] - o["cost"]; o["cost"] = 0.0
+    return o
+
+
+def close_fill(D, X):
+    """fills at signal-day close: next 'open' := previous close (no gap, no limit locks)."""
+    E = dict(D); A, P = D["A"], D["P"]
+    E["AO"] = np.where(D["traded"], np.r_[A[:1], A[:-1]], np.nan); E["PO"] = np.r_[P[:1], P[:-1]]
+    E["lu"] = np.zeros_like(D["lu"]); E["ld"] = np.zeros_like(D["ld"])
+    Y = X.copy(); pc = Y["c"].shift(1); Y["intr"] = Y["c"] / pc - 1; Y["gap"] = 0.0; Y["o"] = pc.fillna(Y["o"])
+    return E, Y
+
+
+def _ab(o, rT):
+    r = o["ret"] - m.RF / 252; x = rT.reindex(r.index).fillna(0) - m.RF / 252
+    r3, x3 = r.rolling(3).sum()[2::3].values, x.rolling(3).sum()[2::3].values
+    Xm = np.c_[np.ones_like(x3), x3]; cf, *_ = np.linalg.lstsq(Xm, r3, rcond=None); e = r3 - Xm @ cf
+    se = np.sqrt(e.var(ddof=2) * np.linalg.inv(Xm.T @ Xm)[0, 0]); return cf[0] * 252 / 3, cf[0] / se, cf[1]
+
+
+def cost_study(D, X, rT, BT, BE, BF, EL, FN, GRP, KNOWN, reb):
+    mv = np.nan_to_num(rT.reindex(D["days"]).values)
+    VAR = {"rank L/S full": dict(), "rank L/S liq0": dict(liq=0), "sector-neutral L/S": dict(mask=KNOWN, grp=GRP),
+           "ELEC L/S (β elec idx)": dict(B=BE, mask=EL), "FIN L/S (β fin idx)": dict(B=BF, mask=FN, min_n=12),
+           "(b2) low-β − TXF×βL": dict(mode="lhedge_unlev"), "FP + ex-post leg-β": dict(rh=mv)}
+    Dc, Xc = close_fill(D, X)
+    SC = {"A full cost": dict(tc=True), "B no trade cost, borrow 2%": dict(tc=False), "C zero all, fin@rf": dict(tc=False, borrow=0.0, fin=m.RF),
+          "D zero all + close fill": dict(tc=False, borrow=0.0, fin=m.RF, close=True)}
+    rows, yearly = [], {}
+    for vn, kw in VAR.items():
+        kw = dict(kw); B = kw.pop("B", BT); tg = {}
+        for t in reb:
+            x = targets(D, B, t, **kw)
+            if x is not None:
+                tg[t] = x[:2]
+        for sn, sk in SC.items():
+            sk = dict(sk); cl = sk.pop("close", False)
+            o = sim_c(Dc, Xc, tg, **sk) if cl else sim_c(D, X, tg, **sk)
+            if vn == "rank L/S full" and sn.startswith("C"):
+                w_ = m.win(o, IS0, None); yearly[sn] = (1 + w_.ret).groupby(w_.index.year).prod() - 1
+            if vn == "rank L/S full" and sn.startswith("D"):
+                w_ = m.win(o, IS0, None); yearly[sn] = (1 + w_.ret).groupby(w_.index.year).prod() - 1
+            for p, lo, hi in (("IS", IS0, IS1), ("OOS", IS1, None)):
+                w_ = m.win(o, lo, hi); st = m.stats(w_, rT); a, at, b = _ab(w_, rT)
+                mx = (rT.reindex(w_.index).fillna(0) - m.RF / 252).mean() * 252
+                rows.append(dict(variant=vn, scen=sn, period=p, CAGR=st["CAGR"], sharpe=st["sharpe"], MDD=st["MDD"], beta=b,
+                                 long_gross=st["long_yr"], short_gross=st["short_yr"], hedge=st["hedge_yr"], beta_mkt=b * mx,
+                                 cost=-st["cost_yr"], borrow=-st["borrow_yr"], financing=o.loc[w_.index, "cash"].mean() * 252,
+                                 net_arith=w_.ret.mean() * 252, alpha=a, alpha_t=at))
+        print("done", vn, flush=True)
+    S = pd.DataFrame(rows); S.to_csv(OUT / "bab_cost_study.csv", index=False)
+    pd.set_option("display.width", 320); pd.set_option("display.max_columns", 30)
+    for p in ("IS", "OOS"):
+        print(f"\n== {p}"); print(S[S.period == p].drop(columns="period").round(3).to_string(index=False))
+    print("\n== yearly rank L/S full (zero cost)"); print(pd.DataFrame(yearly).round(3).to_string())
+
 
 def main():
     pd.set_option("display.width", 260)
@@ -216,11 +283,13 @@ def main():
     im = pd.read_csv(ROOT / "data/stocks/_industry_map.csv", dtype={"code": str}).set_index("code").reindex(D["cols"])
     EL = im.elec.fillna(False).astype(bool).values; GRP = im.ind.fillna("NA").values; KNOWN = im.ind.notna().values
     reb = [t for t in np.where(np.r_[days[1:].month != days[:-1].month, False] & (days >= IS0 - pd.Timedelta(days=40)))[0] if t < len(days) - 1]
-    ap = argparse.ArgumentParser(); ap.add_argument("--fin-only", action="store_true"); ap.add_argument("--beta-study", action="store_true")
+    ap = argparse.ArgumentParser(); ap.add_argument("--fin-only", action="store_true"); ap.add_argument("--beta-study", action="store_true"); ap.add_argument("--cost-study", action="store_true")
     ap.add_argument("--beta-method", default=None, help="replace TAIEX-TR FP beta in main runs with one of beta_methods() keys")
     A = ap.parse_args()
     if A.beta_study:
         return beta_study(D, X, rT, BT, SF, EL, FN_ := pd.Series(GRP).str.contains("金融").values, reb)
+    if A.cost_study:
+        return cost_study(D, X, rT, BT, BE, BF, EL, pd.Series(GRP).str.contains("金融").values, GRP, KNOWN, reb)
     if A.beta_method:
         BT = beta_methods(D, rT)[A.beta_method]()
 
