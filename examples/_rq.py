@@ -156,3 +156,40 @@ def rand_dir(bt, alld, is_end, reps=500, seed=7):
         s = rng.choice([-1, 1], len(bt)); net = s * sg * g - bt.cost.values - 2 * (s != 1) * 0  # 同成本
         dp = np.bincount(di, weights=net * PV, minlength=len(alld)); out.append(sharpe(dp[oos]))
     return np.array(out)
+
+
+@njit(cache=True)
+def run_sig(o, h, l, c, roll, sdir, sstop, H):
+    """t 根收盤訊號 sdir[t]（+1/-1/0）、停損價 sstop[t] → t+1 開盤進場（1 點滑價）；反向訊號於開盤反手；
+    持有 H 根後於下一根開盤出場；停損單盤中觸發（跳空以開盤，1 點滑價）。換月根持倉扣一次來回成本。
+    回傳每根逐日結算淨損益（點）、每根最壞未實現（MAE 點，<=0），交易陣列 (i0, i1, dir, ep, xp, net)。"""
+    n = len(o); pnl = np.zeros(n); mae = np.zeros(n); tr = np.zeros((n, 6)); nt = 0
+    pos = 0; ep = 0.0; stp = np.nan; held = 0; i0 = 0; ref = 0.0
+    for t in range(1, n):
+        # 開盤：時間出場、反手、進場
+        want = sdir[t - 1]
+        if pos != 0 and (held >= H or (want != 0 and want != pos)):
+            xp = o[t] - pos; pnl[t] += pos * (xp - ref) - (0.25 + 2e-5 * xp)
+            tr[nt, 0] = i0; tr[nt, 1] = t; tr[nt, 2] = pos; tr[nt, 3] = ep; tr[nt, 4] = xp; tr[nt, 5] = pos * (xp - ep); nt += 1; pos = 0
+        if pos == 0 and want != 0:
+            pos = int(want); ep = o[t] + pos; ref = ep; stp = sstop[t - 1]; held = 0; i0 = t
+            pnl[t] -= 0.25 + 2e-5 * ep
+        if pos != 0:
+            if roll[t]: pnl[t] -= 0.5 + 4e-5 * o[t] + 2.0
+            held += 1
+            hit = (pos > 0 and l[t] <= stp) or (pos < 0 and h[t] >= stp)
+            if stp == stp and hit:
+                px = (min(o[t], stp) if pos > 0 else max(o[t], stp)) - pos
+                mae[t] = min(0.0, pos * (px - ref)); pnl[t] += pos * (px - ref) - (0.25 + 2e-5 * px)
+                tr[nt, 0] = i0; tr[nt, 1] = t; tr[nt, 2] = pos; tr[nt, 3] = ep; tr[nt, 4] = px; tr[nt, 5] = pos * (px - ep); nt += 1; pos = 0
+            else:
+                adv = (l[t] - ref) if pos > 0 else (ref - h[t]); mae[t] = min(0.0, adv)
+                pnl[t] += pos * (c[t] - ref); ref = c[t]
+    return pnl, mae, tr[:nt]
+
+
+def bar_stats(pnl, mae, ann):
+    eq = np.cumsum(pnl) * PV; prev = np.r_[0, eq[:-1]]; peak = np.maximum.accumulate(np.r_[0, eq])[:-1]
+    s = pnl.std()
+    return dict(Sharpe=pnl.mean() / s * math.sqrt(ann) if s > 0 else np.nan, net_twd=eq[-1] if len(eq) else 0,
+                MDD_intraday=float(np.min(prev + mae * PV - peak)) if len(eq) else 0)
