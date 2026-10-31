@@ -85,3 +85,10 @@ def garch11(r, params=None):
             h = filt(p, r); return 0.5 * np.sum(np.log(h) + r ** 2 / h)
         params = minimize(nll, [v * .05, .08, .9], method="Nelder-Mead", options=dict(maxiter=4000)).x
     return params, filt(params, r)
+
+
+def load_atm_iv(ok_only=True):
+    """TXO 每日 ATM IV（由 examples/78_txo_atm_iv.py 產生）。index=date；atm_iv_* 為小數（0.2=20%）。"""
+    d = pd.read_parquet(ROOT / "data/txo_atm_iv_daily.parquet")
+    if ok_only: d = d[d.ok]
+    return d.set_index("date")
